@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://unpkg.com/vue@3.0.2"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const API_KEY = 'nonono';
+
+      const app = Vue.createApp({
+        data() {
+          return {
+            name: 'Option Sensei',
+            symbol: '',
+            expiration: '',
+            error: null,
+            data: null,
+            maxPain: null,
+            highestCallOI: null,
+            highestPutOI: null,
+            putCallRatio: null,
+            sentiment: null
+          };
+        },
+        methods: {
+          async fetchTradierData() {
+            const url = 'https://api.tradier.com/v1/markets/options/chains';
+
+            try {
+              const response = await fetch(`${url}?symbol=${this.symbol}&expiration=${this.expiration}&greeks=true`, {
+                method: 'GET',
+                headers: {
+                  'Authorization': `Bearer ${API_KEY}`,
+                  'Accept': 'application/json'
+                }
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              const body = await response.json();
+              this.data = body;
+              this.calculateMaxPainAndHighestOI(body);
+              this.calculatePutCallRatio(body);
+            } catch (err) {
+              console.error('Error fetching data from Tradier API:', err);
+              this.error = err.message;
+            }
+          },
+          prettyPrint(json) {
+            return JSON.stringify(json, null, 2);
+          },
+          lookupSymbol() {
+            this.error = null;
+            this.data = null;
+            this.maxPain = null;
+            this.highestCallOI = null;
+            this.highestPutOI = null;
+            this.putCallRatio = null;
+            this.sentiment = null;
+            this.symbol = this.symbol.trim();
+            this.expiration = this.expiration.trim();
+            if (this.symbol && this.expiration) {
+              this.fetchTradierData();
+            } else {
+              this.error = 'Please enter a valid symbol and expiration date.';
+            }
+          },
+          calculateMaxPainAndHighestOI(data) {
+            const options = data.options.option;
+            const strikes = {};
+
+            let highestCallOI = { strike: null, oi: 0 };
+            let highestPutOI = { strike: null, oi: 0 };
+
+            options.forEach(option => {
+              const strike = option.strike;
+              if (!strikes[strike]) {
+                strikes[strike] = { call: 0, put: 0 };
+              }
+
+              if (option.option_type === 'call') {
+                strikes[strike].call += option.open_interest;
+                if (option.open_interest > highestCallOI.oi) {
+                  highestCallOI = { strike, oi: option.open_interest };
+                }
+              } else {
+                strikes[strike].put += option.open_interest;
+                if (option.open_interest > highestPutOI.oi) {
+                  highestPutOI = { strike, oi: option.open_interest };
+                }
+              }
+            });
+
+            this.highestCallOI = highestCallOI;
+            this.highestPutOI = highestPutOI;
+
+            let maxPain = null;
+            let minPain = Infinity;
+
+            Object.keys(strikes).forEach(strike => {
+              const pain = Object.keys(strikes).reduce((total, s) => {
+                const sNum = parseFloat(s);
+                const strikeNum = parseFloat(strike);
+                const callPain = Math.max(0, sNum - strikeNum) * strikes[s].call;
+                const putPain = Math.max(0, strikeNum - sNum) * strikes[s].put;
+                return total + callPain + putPain;
+              }, 0);
+
+              if (pain < minPain) {
+                minPain = pain;
+                maxPain = strike;
+              }
+            });
+
+            this.maxPain = maxPain;
+          },
+          calculatePutCallRatio(data) {
+            const options = data.options.option;
+            let totalCallOI = 0;
+            let totalPutOI = 0;
+
+            options.forEach(option => {
+              if (option.option_type === 'call') {
+                totalCallOI += option.open_interest;
+              } else {
+                totalPutOI += option.open_interest;
+              }
+            });
+
+            this.putCallRatio = (totalPutOI / totalCallOI).toFixed(2);
+            this.sentiment = this.putCallRatio > 1 ? 'Bearish' : 'Bullish';
+          }
+        }
+      });
+
+      app.mount('#app');
+    });
+  </script>
+  <title>Document</title>
+</head>
+<body>
+  <div id="app">
+    <h1>{{ name }}</h1>
+    <input v-model="symbol" placeholder="Enter symbol" />
+    <input v-model="expiration" placeholder="Enter expiration date (YYYY-MM-DD)" />
+    <button @click="lookupSymbol">Lookup Symbol</button>
+    <div v-if="error">
+      <p>Error: {{ error }}</p>
+    </div>
+    <div v-if="maxPain">
+      <p>Max Pain: {{ maxPain }}</p>
+    </div>
+    <div v-if="highestCallOI">
+      <p>Highest Call OI: Strike {{ highestCallOI.strike }} with OI {{ highestCallOI.oi }}</p>
+    </div>
+    <div v-if="highestPutOI">
+      <p>Highest Put OI: Strike {{ highestPutOI.strike }} with OI {{ highestPutOI.oi }}</p>
+    </div>
+    <div v-if="putCallRatio">
+      <p>Put/Call Ratio: {{ putCallRatio }} - Sentiment: {{ sentiment }}</p>
+    </div>
+    <!-- <pre v-if="data">{{ prettyPrint(data) }}</pre> -->
+  </div>
+</body>
+</html>
